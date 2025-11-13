@@ -1282,10 +1282,10 @@ def _doc_scan_op(f):
         >>> tx = ct.full((2, 4), 3, dtype=np.float32)
         >>> ty = ct.{op_name}(tx, 1)
         >>> ty.shape
-        (2,)
+        (2, 4)
         >>> ty = ct.{op_name}(tx, 1, reverse=True)
         >>> ty.shape
-        (2, 1)
+        (2, 4)
     """
 
     return wrapped
