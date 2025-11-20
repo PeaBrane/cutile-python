@@ -10,7 +10,7 @@ import torch
 from torch.testing import make_tensor
 
 import cuda.tile as ct
-from util import assert_close, assert_equal
+from util import assert_close, assert_equal, torch_to_tf32
 from cuda.tile._exception import TileTypeError
 from conftest import float_dtypes, int_dtypes, bool_dtypes, dtype_id
 
@@ -71,12 +71,7 @@ def test_cast_tf32(dtype):
     # Test that tf32 is casted to float32
     x = make_tensor((32, 32), dtype=dtype, device='cuda')
     y = torch.zeros_like(x)
-
-    # emulate TF32 cast in PyTorch by performing a matmul with diag(ones) in TF32 precision
-    dummy = torch.eye(32, dtype=dtype, device='cuda')
-    torch.set_float32_matmul_precision("high")
-    ref = torch.matmul(x, dummy).view(-1)
-    torch.set_float32_matmul_precision("highest")
+    ref = torch_to_tf32(x).view(-1)
     x = x.view(-1)
     y = y.view(-1)
     grid = (ceil(x.numel() / 32), 1)

@@ -7,7 +7,7 @@ import pytest
 import torch
 
 import cuda.tile as ct
-from util import assert_close, assert_equal
+from util import assert_close, assert_equal, torch_to_tf32
 from conftest import dtype_id
 from cuda.tile._exception import TileTypeError
 
@@ -137,9 +137,7 @@ def test_mma_tf32(tile_size):
     A = torch.randn((m, k), dtype=torch.float32, device="cuda")
     B = torch.randn((k, n), dtype=torch.float32, device="cuda")
     C = torch.ones((m, n), dtype=torch.float32, device="cuda")
-    torch.set_float32_matmul_precision("high")
-    ref = C + A @ B
-    torch.set_float32_matmul_precision("highest")
+    ref = C + torch_to_tf32(A) @ torch_to_tf32(B)
     ct.launch(torch.cuda.current_stream(), (1,), mma_tf32_kernel,
               (A, B, C, m, n, k))
     atol, rtol = get_tolerance(torch.float16)

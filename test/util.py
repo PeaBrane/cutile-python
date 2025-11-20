@@ -85,6 +85,16 @@ def get_ptr_16_byte_non_divisible_view(A: TensorLike):
     return A[1:]
 
 
+def torch_to_tf32(x: torch.Tensor):
+    # emulate TF32 cast in PyTorch by performing a matmul with diag(ones) in TF32 precision
+    x1d = x.view(-1)
+    dummy = torch.eye(x1d.shape[0], dtype=x.dtype, device='cuda')
+    torch.set_float32_matmul_precision("high")
+    x1d = torch.matmul(x1d, dummy).view(-1)
+    torch.set_float32_matmul_precision("highest")
+    return x1d.view(x.shape)
+
+
 @contextmanager
 def raises_if(cond, exc_ty, match):
     if cond:
