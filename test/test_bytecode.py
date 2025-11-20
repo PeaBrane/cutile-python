@@ -105,7 +105,7 @@ class HackCompileCallback:
     cubin_path: str
     func_name: str
 
-    def __call__(self, args):
+    def __call__(self, args, ctx):
         assert len(args) == 3
         for x in args:
             assert x.shape == (1,)

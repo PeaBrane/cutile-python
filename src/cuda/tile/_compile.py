@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import atexit
 from dataclasses import dataclass
 import functools
 from functools import cache
@@ -18,10 +17,9 @@ import traceback
 from typing import Callable, Optional
 
 from cuda.tile._ast2ir import get_function_ir
-from cuda.tile._cext import get_compute_capability
+from cuda.tile._cext import get_compute_capability, TileContext, default_tile_context
 from cuda.tile._compiler_options import CompilerOptions
 from cuda.tile._const_utils import get_constant_annotations
-from cuda.tile._debug import CUDA_TILE_TEMP_DIR
 from cuda.tile._exception import TileCompilerError
 from cuda.tile._ir import ir
 from cuda.tile._passes.code_motion import hoist_loop_invariants
@@ -29,8 +27,8 @@ from cuda.tile._passes.loop_split import split_loops
 from cuda.tile._passes.rewrite_patterns import rewrite_patterns
 from cuda.tile._debug import (
     CUDA_TILE_TESTING_DISABLE_TOKEN_ORDER,
-    CUDA_TILE_LOGS,
-    CUDA_TILE_DUMP_BYTECODE, CUDA_TILE_DUMP_TILEIR,
+    CUDA_TILE_DUMP_BYTECODE,
+    CUDA_TILE_DUMP_TILEIR,
 )
 
 from cuda.tile._passes.alias_analysis import alias_analysis_pass
@@ -42,8 +40,6 @@ import cuda.tile._bytecode as bc
 
 
 logger = logging.getLogger(__name__)
-
-_tmp_dir = CUDA_TILE_TEMP_DIR
 
 
 class TileLibrary:
@@ -106,10 +102,13 @@ def _log_mlir(bytecode_buf):
 
 
 @global_compiler_lock
-def compile_tile(pyfunc, args, compiler_options: CompilerOptions) -> TileLibrary:
+def compile_tile(pyfunc,
+                 args,
+                 compiler_options: CompilerOptions,
+                 context: TileContext = default_tile_context) -> TileLibrary:
     func_ir = _get_final_ir(pyfunc, args)
 
-    if 'CUTILEIR' in CUDA_TILE_LOGS:
+    if 'CUTILEIR' in context.config.log_keys:
         code = (f"==== CuTile IR for {func_ir.qualname}==== \n\n"
                 f"{func_ir.to_string(include_loc=False)}\n\n")
         print(f'\n{code}', file=sys.stderr)
@@ -120,7 +119,7 @@ def compile_tile(pyfunc, args, compiler_options: CompilerOptions) -> TileLibrary
     with bc.write_bytecode(num_functions=1, buf=bytecode_buf) as writer:
         generate_bytecode_for_kernel(func_ir, compiler_options, sm_arch, writer)
 
-    if 'TILEIR' in CUDA_TILE_LOGS:
+    if 'TILEIR' in context.config.log_keys:
         _log_mlir(bytecode_buf)
 
     if CUDA_TILE_DUMP_BYTECODE is not None:
@@ -152,7 +151,7 @@ def compile_tile(pyfunc, args, compiler_options: CompilerOptions) -> TileLibrary
 
     # Compile MLIR module and generate cubin
     with tempfile.NamedTemporaryFile(suffix='.mlirbc', prefix=func_ir.qualname,
-                                     dir=get_tmpdir(), delete=False) as f:
+                                     dir=context.config.temp_dir, delete=False) as f:
         f.write(bytecode_buf)
         f.flush()
         cubin_file = compile_cubin(f.name, compiler_options, sm_arch)
@@ -165,23 +164,9 @@ class CompileCallback:
     pyfunc: Callable
     compiler_options: CompilerOptions
 
-    def __call__(self, pyfunc_args):
-        lib = compile_tile(self.pyfunc, pyfunc_args, self.compiler_options)
+    def __call__(self, pyfunc_args, tile_context):
+        lib = compile_tile(self.pyfunc, pyfunc_args, self.compiler_options, tile_context)
         return str(lib.fname_cubin), lib.func_name
-
-
-def _clean_tmp_dir(dir: Optional[str], keep: bool):
-    if keep or dir is None:
-        return
-    shutil.rmtree(dir, ignore_errors=True)
-
-
-def get_tmpdir() -> str:
-    global _tmp_dir
-    if _tmp_dir is None:
-        _tmp_dir = tempfile.mkdtemp()
-        atexit.register(_clean_tmp_dir, _tmp_dir, CUDA_TILE_TEMP_DIR is not None)
-    return _tmp_dir
 
 
 def is_windows() -> bool:

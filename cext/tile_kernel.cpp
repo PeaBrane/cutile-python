@@ -31,6 +31,8 @@ static PyTypeObject* g_torch_Tensor_type;
 static PyTypeObject* g_torch_cuda_Stream_type;
 static PyObject* g_torch_to_dlpack_func;
 
+static PyObject* g_default_tile_context;
+
 #define FOREACH_TORCH_DTYPE(X) \
     X(bool, 8, 1, kDLBool) \
     X(uint8, 8, 1, kDLUInt) \
@@ -898,15 +900,24 @@ struct CompareKey <Vec<PyTypeObject*>, Vec<PyPtr>> {
     }
 };
 
+struct TileContext {
+    PyPtr config;
+};
 
-struct TileDispatcher {
+
+struct TileContextDispatcher {
     using FamilyMap = HashMap<Vec<ParameterKind>, RefPtr<KernelFamily>>;
-
-    Vec<bool> constant_arg_flags;
     ProfileMap arg_profiles;
     FamilyMap kernel_families;
-    PyPtr compile_func;
 };
+
+
+struct TileDispatcher {
+    Vec<bool> constant_arg_flags;
+    PyPtr compile_func;
+    TileContextDispatcher default_context_dispatcher;
+};
+
 
 static void get_pyarg_types(PyObject* const* pyargs, Py_ssize_t num_pyargs,
                             Vec<PyTypeObject*>& pyarg_types) {
@@ -916,15 +927,17 @@ static void get_pyarg_types(PyObject* const* pyargs, Py_ssize_t num_pyargs,
 }
 
 static Result<TileKernel> compile(TileDispatcher& dispatcher,
-                                  PyObject* const* pyargs, Py_ssize_t num_pyargs) {
+                                  PyObject* const* pyargs,
+                                  Py_ssize_t num_pyargs,
+                                  PyObject* py_tile_context) {
     PyPtr pyargs_tuple = steal(PyTuple_New(num_pyargs));
     if (!pyargs_tuple) return ErrorRaised;
 
     for (Py_ssize_t i = 0; i < num_pyargs; ++i)
         PyTuple_SET_ITEM(pyargs_tuple.get(), i, Py_NewRef(pyargs[i]));
 
-    PyPtr compile_result = steal(PyObject_CallOneArg(
-            dispatcher.compile_func.get(), pyargs_tuple.get()));
+    PyPtr compile_result = steal(PyObject_CallFunctionObjArgs(
+            dispatcher.compile_func.get(), pyargs_tuple.get(), py_tile_context, nullptr));
     if (!compile_result) return ErrorRaised;
 
     if (!PyTuple_Check(compile_result.get()))
@@ -1146,7 +1159,8 @@ static Status launch(PyObject* dispatcher_pyobj, Grid grid, CUstream launch_stre
     }
 
     TileDispatcher& dispatcher = py_unwrap<TileDispatcher>(dispatcher_pyobj);
-    PythonArgProfile* profile = dispatcher.arg_profiles.find(helper->pyarg_types);
+    TileContextDispatcher& ctx_dispatcher = dispatcher.default_context_dispatcher;
+    PythonArgProfile* profile = ctx_dispatcher.arg_profiles.find(helper->pyarg_types);
     if (!profile) {
         // Slower path
 
@@ -1161,10 +1175,10 @@ static Status launch(PyObject* dispatcher_pyobj, Grid grid, CUstream launch_stre
             param_kinds.push_back(c->second);
         }
 
-        RefPtr<KernelFamily>* family_pp = dispatcher.kernel_families.find(param_kinds);
+        RefPtr<KernelFamily>* family_pp = ctx_dispatcher.kernel_families.find(param_kinds);
         if (!family_pp) {
             RefPtr<KernelFamily> new_family = steal(new KernelFamily());
-            family_pp = dispatcher.kernel_families.insert(
+            family_pp = ctx_dispatcher.kernel_families.insert(
                     std::move(param_kinds), std::move(new_family));
         }
 
@@ -1173,7 +1187,7 @@ static Status launch(PyObject* dispatcher_pyobj, Grid grid, CUstream launch_stre
         for (PyTypeObject* typeobj : helper->pyarg_types)
             typeobj_refs.push_back(newref(reinterpret_cast<PyObject*>(typeobj)));
 
-        profile = dispatcher.arg_profiles.insert(
+        profile = ctx_dispatcher.arg_profiles.insert(
                     std::move(typeobj_refs),
                     PythonArgProfile{*family_pp, std::move(arg_kinds)});
     }
@@ -1191,7 +1205,7 @@ static Status launch(PyObject* dispatcher_pyobj, Grid grid, CUstream launch_stre
     TileKernel* kernel = kernel_map.find(helper->constants);
     if (!kernel) {
         // Slowest path: need to compile a new kernel
-        Result<TileKernel> res = compile(dispatcher, pyargs, num_pyargs);
+        Result<TileKernel> res = compile(dispatcher, pyargs, num_pyargs, g_default_tile_context);
         if (!res.is_ok()) return ErrorRaised;
 
         kernel = kernel_map.insert(std::move(helper->constants), std::move(*res));
@@ -1279,6 +1293,40 @@ static Result<Vec<bool>> parse_constant_arg_flags(PyObject* tuple) {
     return constant_arg_flags;
 }
 
+
+static int TileContext_init(PyObject* self, PyObject* args, PyObject* kwargs) {
+    const char* keywords[] = {"config", nullptr};
+    PyObject* config = nullptr;
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "$O", const_cast<char**>(keywords), &config))
+        return -1;
+    TileContext& context = py_unwrap<TileContext>(self);
+    context.config = newref(config);
+    return 0;
+}
+
+static PyObject * TileContext_get_config(PyObject* self, void *closure) {
+    return Py_NewRef(py_unwrap<TileContext>(self).config.get());
+}
+
+
+static PyGetSetDef TileContext_getsetters[] = {
+    {"config", (getter)TileContext_get_config, nullptr},
+    {nullptr}  /* Sentinel */
+};
+
+
+static PyTypeObject TileContext_type = {
+    .tp_name = "cuda.tile._cext.TileContext",
+    .tp_basicsize = sizeof(PythonWrapper<TileContext>),
+    .tp_dealloc = pywrapper_dealloc<TileContext>,
+    .tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
+    .tp_getset = TileContext_getsetters,
+    .tp_init = TileContext_init,
+    .tp_new = pywrapper_new<TileContext>,
+};
+
+
 static int TileDispatcher_init(PyObject* self, PyObject* args, PyObject* kwargs) {
     const char* keywords[] = {"", "", nullptr};
     PyObject* py_constant_arg_flags = nullptr;
@@ -1296,7 +1344,6 @@ static int TileDispatcher_init(PyObject* self, PyObject* args, PyObject* kwargs)
 
     return 0;
 }
-
 
 static PyTypeObject TileDispatcher_type = {
     .tp_name = "cuda.tile._cext.TileDispatcher",
@@ -1577,6 +1624,21 @@ static PyTypeObject ArraySpecialization_type = {
 };
 
 
+static Status init_default_tile_context() {
+    PyPtr context_module = steal(PyImport_ImportModule("cuda.tile._context"));
+    if (!context_module) return ErrorRaised;
+    PyPtr default_context = steal(
+            PyObject_CallMethod(context_module.get(),
+            "init_context_from_env",
+            "O",
+            reinterpret_cast<PyObject*>(&TileContext_type))
+    );
+    if (!default_context) return ErrorRaised;
+    g_default_tile_context = default_context.release();
+    return OK;
+};
+
+
 static void try_get_torch_globals() {
     PyPtr torch = try_import("torch");
     if (!torch) return;
@@ -1677,7 +1739,14 @@ Status tile_kernel_init(PyObject* m) {
 
     try_get_numba_globals();
 
+    if (PyType_Ready(&TileContext_type) < 0)
+        return ErrorRaised;
+
     if (PyType_Ready(&TileDispatcher_type) < 0)
+        return ErrorRaised;
+
+    if (PyModule_AddObjectRef(m, "TileContext",
+                reinterpret_cast<PyObject*>(&TileContext_type)) < 0)
         return ErrorRaised;
 
     if (PyModule_AddObjectRef(m, "TileDispatcher",
@@ -1692,6 +1761,11 @@ Status tile_kernel_init(PyObject* m) {
         return ErrorRaised;
 
     if (PyModule_AddFunctions(m, functions) < 0)
+        return ErrorRaised;
+
+    if (!init_default_tile_context()) return ErrorRaised;
+
+    if (PyModule_AddObjectRef(m, "default_tile_context", g_default_tile_context) < 0)
         return ErrorRaised;
 
     return OK;
