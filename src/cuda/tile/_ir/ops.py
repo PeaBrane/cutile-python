@@ -3229,7 +3229,10 @@ class TileArange(TypedOperation):
 
 
 def arange(size: int, dtype: DType) -> Var:
-    res_ty = make_tile_ty(datatype.default_int_type, (size,))
+    if datatype.is_integral(dtype):
+        res_ty = make_tile_ty(dtype, (size,))
+    else:
+        res_ty = make_tile_ty(datatype.default_int_type, (size,))
     res = add_operation(TileArange, res_ty)
     return astype(res, dtype)
 
