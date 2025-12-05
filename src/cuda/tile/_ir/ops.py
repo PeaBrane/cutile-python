@@ -2969,8 +2969,8 @@ def cat(tiles: Var, axis: int) -> Var:
             raise TileTypeError(f"Expected tiles to have the same dtype: {dtype} != {tile_ty.dtype}")  # noqa: E501
         for i, (x, y) in enumerate(zip(shape_value, tile_ty.shape_value, strict=True)):
             if i != axis and x != y:
-                raise TileTypeError("Expected tiles to have the same "
-                                    "shape for non axis dimensions")
+                raise TileTypeError("Expected tiles to have the same shape for non axis dimensions, "
+                                    f"got tiles with shapes: {', '.join(str(ty._unwrapped_shape) for ty in tuple_ty.value_types)}")
         shape_value[axis] += tile_ty.shape_value[axis]
 
     if not all(_is_power_of_2(x) for x in shape_value):
