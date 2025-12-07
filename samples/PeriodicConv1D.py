@@ -302,120 +302,58 @@ def run_sweep(plot: bool = False):
 def plot_results(results: list, channels: list, lengths: list, batch_size: int):
     """
     Generate matplotlib visualization of benchmark results.
+    Shows speedup vs input length for the max channel size.
     """
     try:
         import matplotlib.pyplot as plt
-        import numpy as np
     except ImportError:
         print("\nMatplotlib not installed. Install with: pip install matplotlib")
         return
 
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    # Filter results for max channel size only
+    max_channel = max(channels)
+    filtered = [r for r in results if r["channels"] == max_channel]
 
-    # Organize data by channel count
-    data_by_channel = {}
-    for r in results:
-        C = r["channels"]
-        if C not in data_by_channel:
-            data_by_channel[C] = {
-                "lengths": [],
-                "pytorch": [],
-                "cutile": [],
-                "speedup": [],
-            }
-        data_by_channel[C]["lengths"].append(r["length"])
-        data_by_channel[C]["pytorch"].append(r["pytorch_ms"])
-        data_by_channel[C]["cutile"].append(r["cutile_ms"])
-        data_by_channel[C]["speedup"].append(r["speedup"])
+    if not filtered:
+        print("No results for max channel size")
+        return
 
-    colors = plt.cm.viridis(np.linspace(0, 1, len(channels)))
+    x = [r["length"] for r in filtered]
+    y = [r["speedup"] for r in filtered]
 
-    # Plot 1: PyTorch vs cuTile timing
-    ax1 = axes[0]
-    for i, C in enumerate(channels):
-        if C in data_by_channel:
-            d = data_by_channel[C]
-            ax1.plot(
-                d["lengths"],
-                d["pytorch"],
-                "o--",
-                color=colors[i],
-                alpha=0.5,
-                label=f"PyTorch C={C}",
-            )
-            ax1.plot(
-                d["lengths"], d["cutile"], "s-", color=colors[i], label=f"cuTile C={C}"
-            )
-    ax1.set_xlabel("Input Length")
-    ax1.set_ylabel("Time (ms)")
-    ax1.set_title("Execution Time Comparison")
-    ax1.set_xscale("log", base=2)
-    ax1.set_yscale("log")
-    ax1.legend(fontsize=7, ncol=2)
-    ax1.grid(True, alpha=0.3)
+    fig, ax = plt.subplots(figsize=(8, 5))
 
-    # Plot 2: Speedup by length (lines for each channel)
-    ax2 = axes[1]
-    for i, C in enumerate(channels):
-        if C in data_by_channel:
-            d = data_by_channel[C]
-            ax2.plot(d["lengths"], d["speedup"], "o-", color=colors[i], label=f"C={C}")
-    ax2.set_xlabel("Input Length")
-    ax2.set_ylabel("Speedup (PyTorch / cuTile)")
-    ax2.set_title("Speedup vs Input Length")
-    ax2.set_xscale("log", base=2)
-    ax2.axhline(y=1.0, color="red", linestyle="--", alpha=0.5, label="1x (break-even)")
-    ax2.legend(fontsize=8)
-    ax2.grid(True, alpha=0.3)
-
-    # Plot 3: Speedup heatmap
-    ax3 = axes[2]
-    speedup_matrix = np.zeros((len(channels), len(lengths)))
-    for r in results:
-        i = channels.index(r["channels"])
-        j = lengths.index(r["length"])
-        speedup_matrix[i, j] = r["speedup"]
-
-    im = ax3.imshow(
-        speedup_matrix,
-        cmap="RdYlGn",
-        aspect="auto",
-        vmin=0.5,
-        vmax=max(3.0, speedup_matrix.max()),
+    ax.plot(
+        x, y, "o-", color="#2ecc71", linewidth=2, markersize=8, label="cuTile speedup"
     )
-    ax3.set_xticks(range(len(lengths)))
-    ax3.set_xticklabels(lengths)
-    ax3.set_yticks(range(len(channels)))
-    ax3.set_yticklabels(channels)
-    ax3.set_xlabel("Input Length")
-    ax3.set_ylabel("Channels (C_in = C_out)")
-    ax3.set_title("Speedup Heatmap")
-
-    # Add text annotations
-    for i in range(len(channels)):
-        for j in range(len(lengths)):
-            val = speedup_matrix[i, j]
-            if val > 0:
-                ax3.text(
-                    j,
-                    i,
-                    f"{val:.2f}x",
-                    ha="center",
-                    va="center",
-                    fontsize=8,
-                    color="black" if 1.0 < val < 2.5 else "white",
-                )
-
-    plt.colorbar(im, ax=ax3, label="Speedup")
-
-    plt.suptitle(
-        f"Periodic Conv1D + ReLU: PyTorch (unfused) vs cuTile (fused)\n"
-        f"Batch={batch_size}, Kernel=3, dtype=float32",
-        fontsize=12,
+    ax.axhline(
+        y=1.0, color="#e74c3c", linestyle="--", alpha=0.7, label="1x (break-even)"
     )
+
+    ax.set_xlabel("Input Length", fontsize=12)
+    ax.set_ylabel("Speedup (PyTorch / cuTile)", fontsize=12)
+    ax.set_title(
+        f"Periodic Conv1D + ReLU: cuTile vs PyTorch\n"
+        f"Batch={batch_size}, Channels={max_channel}, Kernel=3",
+        fontsize=13,
+    )
+    ax.set_xscale("log", base=2)
+    ax.legend(fontsize=10)
+    ax.grid(True, alpha=0.3)
+
+    # Annotate points
+    for xi, yi in zip(x, y):
+        ax.annotate(
+            f"{yi:.2f}x",
+            (xi, yi),
+            textcoords="offset points",
+            xytext=(0, 8),
+            ha="center",
+            fontsize=9,
+        )
+
     plt.tight_layout()
 
-    # Save and show
     output_path = "periodic_conv1d_benchmark.png"
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
     print(f"\nPlot saved to: {output_path}")
