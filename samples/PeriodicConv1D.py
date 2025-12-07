@@ -28,7 +28,10 @@ ConstInt = ct.Constant[int]
 # PyTorch Reference Implementation (Unfused)
 # =============================================================================
 
-def pytorch_periodic_conv1d_relu(input: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
+
+def pytorch_periodic_conv1d_relu(
+    input: torch.Tensor, weight: torch.Tensor
+) -> torch.Tensor:
     """
     PyTorch periodic 1D convolution with ReLU (NOT fused - two kernel launches).
 
@@ -40,7 +43,7 @@ def pytorch_periodic_conv1d_relu(input: torch.Tensor, weight: torch.Tensor) -> t
         Output tensor of shape (B, C_out, L)
     """
     # Circular padding for kernel size 3: pad 1 on each side
-    input_padded = F.pad(input, (1, 1), mode='circular')
+    input_padded = F.pad(input, (1, 1), mode="circular")
 
     # Convolution (first kernel launch)
     output = F.conv1d(input_padded, weight, padding=0)
@@ -55,11 +58,11 @@ def pytorch_periodic_conv1d_relu(input: torch.Tensor, weight: torch.Tensor) -> t
 # cuTile Implementation (Fused Conv + ReLU)
 # =============================================================================
 
+
 @ct.kernel
-def periodic_conv1d_relu_kernel(input, weight, output,
-                                C_in: ConstInt,
-                                TILE_C: ConstInt,
-                                TILE_L: ConstInt):
+def periodic_conv1d_relu_kernel(
+    input, weight, output, C_in: ConstInt, TILE_C: ConstInt, TILE_L: ConstInt
+):
     """
     cuTile kernel for periodic 1D convolution with fused ReLU.
 
@@ -76,9 +79,9 @@ def periodic_conv1d_relu_kernel(input, weight, output,
         TILE_C: Tile size for output channels
         TILE_L: Tile size for spatial dimension
     """
-    bid_b = ct.bid(0)   # Batch
-    bid_c = ct.bid(1)   # Output channel tile
-    bid_l = ct.bid(2)   # Spatial tile
+    bid_b = ct.bid(0)  # Batch
+    bid_c = ct.bid(1)  # Output channel tile
+    bid_l = ct.bid(2)  # Spatial tile
 
     L = input.shape[2]
 
@@ -97,8 +100,9 @@ def periodic_conv1d_relu_kernel(input, weight, output,
         input_patch = ct.gather(input, (bid_b, c_in, l_indices))  # (TILE_L + 2,)
 
         # Load kernel weights for this input channel: (TILE_C, 3)
-        weight_tile = ct.load(weight, (c_start, c_in, 0), (TILE_C, 1, 3),
-                              padding_mode=ct.PaddingMode.ZERO)
+        weight_tile = ct.load(
+            weight, (c_start, c_in, 0), (TILE_C, 1, 3), padding_mode=ct.PaddingMode.ZERO
+        )
         weight_tile = ct.reshape(weight_tile, (TILE_C, 3))
 
         # Convolve: for each of 3 kernel positions
@@ -106,7 +110,7 @@ def periodic_conv1d_relu_kernel(input, weight, output,
             # Extract shifted patch of length TILE_L
             patch_shifted = ct.extract(input_patch, index=(k,), shape=(TILE_L,))
             # Broadcast multiply and accumulate
-            acc = acc + weight_tile[:, k:k+1] * patch_shifted[None, :]
+            acc = acc + weight_tile[:, k : k + 1] * patch_shifted[None, :]
 
     # Fused ReLU
     acc = ct.maximum(acc, 0.0)
@@ -115,8 +119,9 @@ def periodic_conv1d_relu_kernel(input, weight, output,
     ct.store(output, (bid_b, c_start, l_start), acc)
 
 
-def cutile_periodic_conv1d_relu(input: torch.Tensor, weight: torch.Tensor,
-                                 tile_c: int = 32, tile_l: int = 32) -> torch.Tensor:
+def cutile_periodic_conv1d_relu(
+    input: torch.Tensor, weight: torch.Tensor, tile_c: int = 32, tile_l: int = 32
+) -> torch.Tensor:
     """
     cuTile periodic 1D convolution with fused ReLU.
 
@@ -133,7 +138,9 @@ def cutile_periodic_conv1d_relu(input: torch.Tensor, weight: torch.Tensor,
     C_out = weight.shape[0]
 
     # Ensure tile sizes divide dimensions evenly
-    assert C_out % tile_c == 0, f"C_out ({C_out}) must be divisible by tile_c ({tile_c})"
+    assert (
+        C_out % tile_c == 0
+    ), f"C_out ({C_out}) must be divisible by tile_c ({tile_c})"
     assert L % tile_l == 0, f"L ({L}) must be divisible by tile_l ({tile_l})"
 
     # Allocate output
@@ -150,7 +157,7 @@ def cutile_periodic_conv1d_relu(input: torch.Tensor, weight: torch.Tensor,
         torch.cuda.current_stream(),
         grid,
         periodic_conv1d_relu_kernel,
-        (input, weight, output, C_in, tile_c, tile_l)
+        (input, weight, output, C_in, tile_c, tile_l),
     )
 
     return output
@@ -160,14 +167,16 @@ def cutile_periodic_conv1d_relu(input: torch.Tensor, weight: torch.Tensor,
 # Correctness Verification
 # =============================================================================
 
-def verify_correctness(B: int, C_in: int, C_out: int, L: int,
-                       tile_c: int = 32, tile_l: int = 32) -> bool:
+
+def verify_correctness(
+    B: int, C_in: int, C_out: int, L: int, tile_c: int = 32, tile_l: int = 32
+) -> bool:
     """
     Verify that cuTile and PyTorch implementations produce matching results.
     """
     # Create random input and weights
-    input = torch.randn(B, C_in, L, device='cuda', dtype=torch.float32)
-    weight = torch.randn(C_out, C_in, 3, device='cuda', dtype=torch.float32)
+    input = torch.randn(B, C_in, L, device="cuda", dtype=torch.float32)
+    weight = torch.randn(C_out, C_in, 3, device="cuda", dtype=torch.float32)
 
     # Compute using both implementations
     output_pytorch = pytorch_periodic_conv1d_relu(input, weight)
@@ -186,14 +195,16 @@ def verify_correctness(B: int, C_in: int, C_out: int, L: int,
 # Benchmark
 # =============================================================================
 
-def run_benchmark(B: int, C_in: int, C_out: int, L: int,
-                  tile_c: int = 32, tile_l: int = 32) -> dict:
+
+def run_benchmark(
+    B: int, C_in: int, C_out: int, L: int, tile_c: int = 32, tile_l: int = 32
+) -> dict:
     """
     Benchmark both implementations and return timing results.
     """
     # Create random input and weights
-    input = torch.randn(B, C_in, L, device='cuda', dtype=torch.float32)
-    weight = torch.randn(C_out, C_in, 3, device='cuda', dtype=torch.float32)
+    input = torch.randn(B, C_in, L, device="cuda", dtype=torch.float32)
+    weight = torch.randn(C_out, C_in, 3, device="cuda", dtype=torch.float32)
 
     # Ensure CUDA is ready
     torch.cuda.synchronize()
@@ -213,13 +224,16 @@ def run_benchmark(B: int, C_in: int, C_out: int, L: int,
     return {
         "pytorch_ms": pytorch_result["mean_time_ms"],
         "cutile_ms": cutile_result["mean_time_ms"],
-        "speedup": pytorch_result["mean_time_ms"] / cutile_result["mean_time_ms"]
+        "speedup": pytorch_result["mean_time_ms"] / cutile_result["mean_time_ms"],
     }
 
 
-def run_sweep():
+def run_sweep(plot: bool = False):
     """
     Run benchmark sweep over increasing channel sizes and input lengths.
+
+    Args:
+        plot: If True, generate matplotlib visualization
     """
     B = 128  # Fixed batch size
     channels = [16, 32, 64, 128, 256, 512]
@@ -234,8 +248,13 @@ def run_sweep():
     print(f"Kernel size: 3")
     print(f"Data type: float32\n")
 
-    print(f"{'C_in/C_out':>12} {'Length':>10} {'PyTorch (ms)':>14} {'cuTile (ms)':>13} {'Speedup':>10}")
+    print(
+        f"{'C_in/C_out':>12} {'Length':>10} {'PyTorch (ms)':>14} {'cuTile (ms)':>13} {'Speedup':>10}"
+    )
     print("-" * 65)
+
+    # Collect results for plotting
+    results = []
 
     for C in channels:
         for L in lengths:
@@ -259,16 +278,154 @@ def run_sweep():
 
             # Run benchmark
             result = run_benchmark(B, C_in, C_out, L, tile_c, tile_l)
+            results.append(
+                {
+                    "channels": C,
+                    "length": L,
+                    "pytorch_ms": result["pytorch_ms"],
+                    "cutile_ms": result["cutile_ms"],
+                    "speedup": result["speedup"],
+                }
+            )
 
-            print(f"{C:>12} {L:>10} {result['pytorch_ms']:>14.3f} "
-                  f"{result['cutile_ms']:>13.3f} {result['speedup']:>10.2f}x")
+            print(
+                f"{C:>12} {L:>10} {result['pytorch_ms']:>14.3f} "
+                f"{result['cutile_ms']:>13.3f} {result['speedup']:>10.2f}x"
+            )
 
     print("=" * 80)
+
+    if plot and results:
+        plot_results(results, channels, lengths, B)
+
+
+def plot_results(results: list, channels: list, lengths: list, batch_size: int):
+    """
+    Generate matplotlib visualization of benchmark results.
+    """
+    try:
+        import matplotlib.pyplot as plt
+        import numpy as np
+    except ImportError:
+        print("\nMatplotlib not installed. Install with: pip install matplotlib")
+        return
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+
+    # Organize data by channel count
+    data_by_channel = {}
+    for r in results:
+        C = r["channels"]
+        if C not in data_by_channel:
+            data_by_channel[C] = {
+                "lengths": [],
+                "pytorch": [],
+                "cutile": [],
+                "speedup": [],
+            }
+        data_by_channel[C]["lengths"].append(r["length"])
+        data_by_channel[C]["pytorch"].append(r["pytorch_ms"])
+        data_by_channel[C]["cutile"].append(r["cutile_ms"])
+        data_by_channel[C]["speedup"].append(r["speedup"])
+
+    colors = plt.cm.viridis(np.linspace(0, 1, len(channels)))
+
+    # Plot 1: PyTorch vs cuTile timing
+    ax1 = axes[0]
+    for i, C in enumerate(channels):
+        if C in data_by_channel:
+            d = data_by_channel[C]
+            ax1.plot(
+                d["lengths"],
+                d["pytorch"],
+                "o--",
+                color=colors[i],
+                alpha=0.5,
+                label=f"PyTorch C={C}",
+            )
+            ax1.plot(
+                d["lengths"], d["cutile"], "s-", color=colors[i], label=f"cuTile C={C}"
+            )
+    ax1.set_xlabel("Input Length")
+    ax1.set_ylabel("Time (ms)")
+    ax1.set_title("Execution Time Comparison")
+    ax1.set_xscale("log", base=2)
+    ax1.set_yscale("log")
+    ax1.legend(fontsize=7, ncol=2)
+    ax1.grid(True, alpha=0.3)
+
+    # Plot 2: Speedup by length (lines for each channel)
+    ax2 = axes[1]
+    for i, C in enumerate(channels):
+        if C in data_by_channel:
+            d = data_by_channel[C]
+            ax2.plot(d["lengths"], d["speedup"], "o-", color=colors[i], label=f"C={C}")
+    ax2.set_xlabel("Input Length")
+    ax2.set_ylabel("Speedup (PyTorch / cuTile)")
+    ax2.set_title("Speedup vs Input Length")
+    ax2.set_xscale("log", base=2)
+    ax2.axhline(y=1.0, color="red", linestyle="--", alpha=0.5, label="1x (break-even)")
+    ax2.legend(fontsize=8)
+    ax2.grid(True, alpha=0.3)
+
+    # Plot 3: Speedup heatmap
+    ax3 = axes[2]
+    speedup_matrix = np.zeros((len(channels), len(lengths)))
+    for r in results:
+        i = channels.index(r["channels"])
+        j = lengths.index(r["length"])
+        speedup_matrix[i, j] = r["speedup"]
+
+    im = ax3.imshow(
+        speedup_matrix,
+        cmap="RdYlGn",
+        aspect="auto",
+        vmin=0.5,
+        vmax=max(3.0, speedup_matrix.max()),
+    )
+    ax3.set_xticks(range(len(lengths)))
+    ax3.set_xticklabels(lengths)
+    ax3.set_yticks(range(len(channels)))
+    ax3.set_yticklabels(channels)
+    ax3.set_xlabel("Input Length")
+    ax3.set_ylabel("Channels (C_in = C_out)")
+    ax3.set_title("Speedup Heatmap")
+
+    # Add text annotations
+    for i in range(len(channels)):
+        for j in range(len(lengths)):
+            val = speedup_matrix[i, j]
+            if val > 0:
+                ax3.text(
+                    j,
+                    i,
+                    f"{val:.2f}x",
+                    ha="center",
+                    va="center",
+                    fontsize=8,
+                    color="black" if 1.0 < val < 2.5 else "white",
+                )
+
+    plt.colorbar(im, ax=ax3, label="Speedup")
+
+    plt.suptitle(
+        f"Periodic Conv1D + ReLU: PyTorch (unfused) vs cuTile (fused)\n"
+        f"Batch={batch_size}, Kernel=3, dtype=float32",
+        fontsize=12,
+    )
+    plt.tight_layout()
+
+    # Save and show
+    output_path = "periodic_conv1d_benchmark.png"
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    print(f"\nPlot saved to: {output_path}")
+    plt.show()
 
 
 # =============================================================================
 # Main
 # =============================================================================
+
 
 def test():
     """
@@ -297,12 +454,15 @@ def test():
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Periodic 1D Convolution + ReLU")
-    parser.add_argument("--sweep", action="store_true",
-                        help="Run full benchmark sweep")
+    parser.add_argument("--sweep", action="store_true", help="Run full benchmark sweep")
+    parser.add_argument(
+        "--plot",
+        action="store_true",
+        help="Generate matplotlib visualization (requires --sweep)",
+    )
     args = parser.parse_args()
 
     if args.sweep:
-        run_sweep()
+        run_sweep(plot=args.plot)
     else:
         test()
-
