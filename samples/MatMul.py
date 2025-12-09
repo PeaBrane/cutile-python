@@ -58,10 +58,11 @@ def matmul_kernel(A, B, C,
     N = B.shape[1]
     bidx, bidy = swizzle_2d(M, N, tm, tn, GROUP_SIZE_M)
 
-    # Calculate the total number of K-tiles that need to be processed.
-    # `ct.num_tiles(A, axis=1, shape=(tm, tk))` extracts the K-dimension (axis 1)
-    # from matrix A's shape, assuming A's shape is conceptually (M_tiles, K_tiles),
-    # and then implicitly performs ceiling division by `tk` to get the number of K-tiles.
+    # Calculate the total number of tiles along the K-dimension that need to be processed.
+    # `ct.num_tiles(A, axis=1, shape=(tm, tk))` means:
+    #   "View A as an MxK tensor tiled by (tm, tk), and return the number of tiles along
+    #    axis 1 (the K dimension)."
+    # We pass shape=(tm, tk) to describe the 2D tiling, only `tk` matters for axis=1.
     num_tiles_k = ct.num_tiles(A, axis=1, shape=(tm, tk))
 
     # Initialize an accumulator for the current output tile (tm x tn).
