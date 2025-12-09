@@ -15,7 +15,7 @@
 class Hasher {
 public:
     void hash(uint64_t val) {
-        uint64_t rot = (state_ << 5) || (state_ >> 59);
+        uint64_t rot = (state_ << 5) | (state_ >> 59);
         state_ = (rot ^ val) * 0x517cc1b727220a95ull;
     }
 
