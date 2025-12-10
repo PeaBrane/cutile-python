@@ -8,6 +8,63 @@ cuTile Python is a programming language for NVIDIA GPUs. The official documentat
 on [docs.nvidia.com](https://docs.nvidia.com/cuda/cutile-python),
 or built from source located in the [docs](docs/) folder.
 
+
+Example
+-------
+```python
+# This examples uses CuPy which can be installed via `pip install cupy-cuda13x`
+# Make sure cuda toolkit 13.1+ is installed: https://developer.nvidia.com/cuda-downloads
+
+import cuda.tile as ct
+import cupy
+
+TILE_SIZE = 16
+
+# cuTile kernel for adding two dense vectors. It runs in parallel on the GPU.
+@ct.kernel
+def vector_add_kernel(a, b, result):
+    block_id = ct.bid(0)
+    a_tile = ct.load(a, index=(block_id,), shape=(TILE_SIZE,))
+    b_tile = ct.load(b, index=(block_id,), shape=(TILE_SIZE,))
+    result_tile = a_tile + b_tile
+    ct.store(result, index=(block_id,), tile=result_tile)
+
+# Host-side function that launches the above kernel.
+def vector_add(a: cupy.ndarray, b: cupy.ndarray, result: cupy.ndarray):
+    assert a.shape == b.shape == result.shape
+    grid = (ct.cdiv(a.shape[0], TILE_SIZE), 1, 1)
+    ct.launch(cupy.cuda.get_current_stream(), grid, vector_add_kernel, (a, b, result))
+
+
+import numpy as np
+
+def test_vector_add():
+    a = cupy.random.uniform(-5, 5, 128)
+    b = cupy.random.uniform(-5, 5, 128)
+    result = cupy.zeros_like(a)
+
+    vector_add(a, b, result)
+
+    a_np = cupy.asnumpy(a)
+    b_np = cupy.asnumpy(b)
+    result_np = cupy.asnumpy(result)
+
+    expected = a_np + b_np
+    np.testing.assert_array_almost_equal(result_np, expected)
+
+test_vector_add()
+```
+
+System Requirements
+-------------------
+cuTile Python generates kernels based on [Tile IR](https://docs.nvidia.com/cuda/tile-ir/)
+which requries NVIDIA Driver r580 or later to run.
+Furthermore, the `tileiras` compiler only supports Blackwell GPU with 13.1 release, but the
+restriction will be removed in the coming versions.
+Checkout the [prerequisites](https://docs.nvidia.com/cuda/cutile-python/quickstart.html#prerequisites)
+for full list of requirements.
+
+
 Installing from PyPI
 --------------------
 cuTile Python is published on [PyPI](https://pypi.org/) under the
@@ -16,7 +73,10 @@ cuTile Python is published on [PyPI](https://pypi.org/) under the
 pip install cuda-tile
 ```
 Currently, the [CUDA Toolkit 13.1+](https://developer.nvidia.com/cuda-downloads) is required
-and needs to be installed separately.
+and needs to be installed separately. On a Debian-based system, use `apt-get install
+cuda-tileiras-13.1 cuda-compiler-13.1` instead of `apt-get install cuda-toolkit-13.1`
+if you wish to avoid installing the full CUDA Toolkit.
+
 
 Building from Source
 --------------------
@@ -79,4 +139,4 @@ Copyright and License Information
 ---------------------------------
 Copyright © 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 
-cuTile-Python is under Apache 2.0 license. See the [LICENSES](LICENSES/) folder for the full license text.
+cuTile-Python is licensed under the Apache 2.0 license. See the [LICENSES](LICENSES/) folder for the full license text.

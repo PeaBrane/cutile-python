@@ -4,8 +4,6 @@
 
 # flake8: noqa
 
-import torch  # to load libnvrtc so that cupy works in the CI
-
 #example-begin
 import cuda.tile as ct
 import cupy
