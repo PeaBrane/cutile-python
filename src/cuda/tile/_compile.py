@@ -98,7 +98,8 @@ def _log_mlir(bytecode_buf):
     try:
         from cuda.tile_internal import _internal_cext
     except ImportError:
-        print("Can't print MLIR because the internal extension is missing", file=sys.stderr)
+        print("Can't print MLIR because the internal extension is missing. "
+              "This is currently not a public feature", file=sys.stderr)
         return
 
     try:
@@ -192,7 +193,8 @@ def compile_tile(pyfunc,
             with open(path, "w") as f:
                 print(mlir_text, file=f)
         except ImportError:
-            print("Can't print MLIR because the internal extension is missing", file=sys.stderr)
+            print("Can't print MLIR because the internal extension is missing. "
+                  "This is currently not a public feature.", file=sys.stderr)
 
     # Compile MLIR module and generate cubin
     with tempfile.NamedTemporaryFile(suffix='.bytecode', prefix=func_ir.qualname,

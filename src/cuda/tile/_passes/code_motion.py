@@ -97,6 +97,7 @@ def _hoist(block: Block, stack: list[_StackItem], def_depth: dict[str, int], is_
                 depinfo.update(_get_def_depth(def_depth, v), depth)
             depinfo.update(body_res.min_depth, depth)
         elif isinstance(op, IfElse):
+            depinfo.update(_get_def_depth(def_depth, op.cond), depth)
             for branch in (op.then_block, op.else_block):
                 branch_res = _hoist(branch, stack, def_depth, False)
                 depinfo.update(branch_res.min_depth, depth)
@@ -114,6 +115,8 @@ def _hoist(block: Block, stack: list[_StackItem], def_depth: dict[str, int], is_
             depinfo.must_stay = True
         elif isinstance(op, EndBranch):
             depinfo.must_stay = True
+            for v in op.outputs:
+                depinfo.update(_get_def_depth(def_depth, v), depth)
         else:
             # "Pure" operation without any nested blocks, side effects and jumps.
             assert len(op.nested_blocks) == 0

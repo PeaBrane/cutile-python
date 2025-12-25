@@ -43,7 +43,7 @@ def fft_kernel(x_packed_in, y_packed_out,
     F1F2 = F1 * F2
     F0F2 = F0 * F2
 
-    bid = ct.bid(0)  # Get the Batch ID for the current thread block.
+    bid = ct.bid(0)  # Get the Batch ID for the current block.
     # In this kernel, each block processes one item from the batch.
 
     # --- Load Input Data ---

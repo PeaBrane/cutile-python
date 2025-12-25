@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import os
+import shutil
 import cuda.tile
 import cuda.tile._datatype
 
@@ -62,6 +63,11 @@ html_sidebars = {
 # Make sure the generated includes directory exists
 generated_includes_dir = os.path.join(os.path.dirname(__file__), 'generated', 'includes')
 os.makedirs(generated_includes_dir, exist_ok=True)
+
+# Copy release notes from root
+release_notes_src = os.path.join(os.path.dirname(__file__), '..', '..', "CHANGELOG.md")
+release_notes_dst = os.path.join(os.path.dirname(__file__), 'generated', "release_notes.md")
+shutil.copy(release_notes_src, release_notes_dst)
 
 # List of RST include generation functions to run
 rst_generated_includes = [

@@ -7,12 +7,15 @@ from conftest import dtype_id, shape_id
 import pytest
 import torch
 import cuda.tile as ct
+import cuda.tile_experimental as ct_experimental
+import itertools
 from math import ceil
 from util import estimate_bench_iter, next_power_of_2
 from kernels.rms_norm import (
     rms_norm_kernel, rms_norm_kernel_gather, rms_norm_kernel_static_persistent
 )
-from autotuner.autotuner import Autotuner, Config, SearchSpace, autotune
+from functools import partial
+from types import SimpleNamespace
 
 
 @pytest.fixture(params=[
@@ -126,12 +129,12 @@ def cutile_rms_norm(x, weight, eps, static_persistent, gather):
     return y.view(*x.shape)
 
 
-def _static_persistent_autotune_grid(named_args, cfg):
+def _static_persistent_autotune_grid(x, cfg):
     """Grid function for static persistent RMS Norm autotuning"""
     NUM_SMS = torch.cuda.get_device_properties(
         "cuda"
     ).multi_processor_count
-    M, N = named_args['X'].shape[0], named_args['X'].shape[1]
+    M, N = x.shape[0], x.shape[1]
     grid_size = min(
         NUM_SMS,
         ceil(M / cfg.TILE_SIZE_M) * ceil(N / cfg.TILE_SIZE_N),
@@ -140,88 +143,83 @@ def _static_persistent_autotune_grid(named_args, cfg):
 
 
 def _static_persistent_autotune_configs():
-    """Get autotune configurations for RMS Norm kernel"""
-    configs = [
-        Config(
+    """Iterator of autotune configurations for RMS Norm kernel."""
+    ts_m_vals = [2, 4, 8, 16]
+    ts_n_vals = [2**9, 2**10, 2**11, 2**12, 2**13, 2**14]
+    num_ctas_vals = [1, 2]
+    occupancy_vals = [1, 2, 4, 8, 16, 32]
+
+    for ts_m, ts_n, s, w in itertools.product(ts_m_vals, ts_n_vals, num_ctas_vals, occupancy_vals):
+        yield SimpleNamespace(
             TILE_SIZE_M=ts_m,
             TILE_SIZE_N=ts_n,
             num_ctas=s,
             occupancy=w,
         )
-        for ts_m in [2, 4, 8, 16]
-        for ts_n in [2**9, 2**10, 2**11, 2**12, 2**13, 2**14]
-        for s in [1, 2]
-        for w in [1, 2, 4, 8, 16, 32]
-    ]
-    return configs
 
 
-def _static_persistent_autotune_predicate(named_args, cfg):
+def _static_persistent_autotune_predicate(x, cfg):
     """Predicate function for static persistent RMS Norm autotuning"""
-    return named_args['X'].shape[1] * 2 > cfg.TILE_SIZE_N >= named_args['X'].shape[1]
+    return x.shape[1] * 2 > cfg.TILE_SIZE_N >= x.shape[1]
 
 
-def _standard_autotune_grid(named_args, cfg):
-    """Grid function for standard RMS Norm autotuning"""
-    return (named_args['x'].shape[0],)
+def _rms_norm_static_persistent_base(stream, x, y, weight, eps):
+    ct_experimental.autotune_launch(
+        stream,
+        grid_fn=partial(_static_persistent_autotune_grid, x),
+        kernel=rms_norm_kernel_static_persistent,
+        args_fn=lambda cfg: (x, y, weight, cfg.TILE_SIZE_M, cfg.TILE_SIZE_N, eps),
+        hints_fn=lambda cfg: {
+            "num_ctas": cfg.num_ctas,
+            "occupancy": cfg.occupancy,
+        },
+        search_space=lambda: (
+            cfg for cfg in _static_persistent_autotune_configs()
+            if _static_persistent_autotune_predicate(x, cfg)
+        ),
+    )
+    return y
 
 
 def _standard_autotune_configs():
     """Get autotune configurations for RMS Norm kernel"""
-    configs = [
-        Config(
+    ts_vals = [2**7, 2**8, 2**9, 2**10, 2**11, 2**12]
+    num_ctas_vals = [1, 2]
+    occupancy_vals = [1, 2, 4, 8, 16, 32]
+    for ts, s, w in itertools.product(ts_vals, num_ctas_vals, occupancy_vals):
+        yield SimpleNamespace(
             TILE_SIZE=ts,
             num_ctas=s,
             occupancy=w,
         )
-        for ts in [2**7, 2**8, 2**9, 2**10, 2**11, 2**12]
-        for s in [1, 2]
-        for w in [1, 2, 4, 8, 16, 32]
-    ]
-    return configs
 
 
-@autotune(
-    search_space=SearchSpace(
-        _static_persistent_autotune_configs(),
-        predicate_fn=_static_persistent_autotune_predicate,
-    ),
-)
-def _rms_norm_static_persistent_base(stream, x, y, weight, eps, autotuner: Autotuner):
-    autotuner(
+def _rms_norm_standard_gather_base(stream, x, weight, y, rstd, N, eps):
+    ct_experimental.autotune_launch(
         stream,
-        grid_fn=_static_persistent_autotune_grid,
-        kernel=rms_norm_kernel_static_persistent,
-        args_fn=lambda cfg: (x, y, weight, cfg.TILE_SIZE_M, cfg.TILE_SIZE_N, eps),
-        max_iter=20,  # reduce the number of configurations to test for faster benchmarking.
-    )
-    return y
-
-
-@autotune(
-    search_space=_standard_autotune_configs(),
-)
-def _rms_norm_standard_gather_base(stream, x, weight, y, rstd, N, eps, autotuner: Autotuner):
-    autotuner(
-        stream,
-        grid_fn=_standard_autotune_grid,
+        grid_fn=lambda cfg: (x.shape[0], ),
         kernel=rms_norm_kernel_gather,
         args_fn=lambda cfg: (x, weight, y, rstd, N, eps, cfg.TILE_SIZE),
-        max_iter=20,  # reduce the number of configurations to test for faster benchmarking.
+        hints_fn=lambda cfg: {
+            "num_ctas": cfg.num_ctas,
+            "occupancy": cfg.occupancy,
+        },
+        search_space=_standard_autotune_configs(),
     )
     return y
 
 
-@autotune(
-    search_space=_standard_autotune_configs(),
-)
-def _rms_norm_standard_tiled_base(stream, x, weight, y, rstd, N, eps, autotuner: Autotuner):
-    autotuner(
+def _rms_norm_standard_tiled_base(stream, x, weight, y, rstd, N, eps):
+    ct_experimental.autotune_launch(
         stream,
-        grid_fn=_standard_autotune_grid,
+        grid_fn=lambda cfg: (x.shape[0], ),
         kernel=rms_norm_kernel,
         args_fn=lambda cfg: (x, weight, y, rstd, N, eps, cfg.TILE_SIZE),
-        max_iter=20,  # reduce the number of configurations to test for faster benchmarking.
+        hints_fn=lambda cfg: {
+            "num_ctas": cfg.num_ctas,
+            "occupancy": cfg.occupancy,
+        },
+        search_space=_standard_autotune_configs(),
     )
     return y
 

@@ -8,7 +8,7 @@ import torch
 import pytest
 import cuda.tile as ct
 
-from util import estimate_bench_iter
+from util import estimate_bench_iter, torch_use_tf32_matmul
 from kernels.matmul import (
     matmul_kernel, matmul_split_k_kernel, batch_matmul_kernel, persistent_matmul_kernel
 )
@@ -29,10 +29,9 @@ def _run_matmul_benchmark(shape, dtype, backend, benchmark, extra_args=(), atol=
 
     args = (A, B, C) + extra_args
 
-    torch.set_float32_matmul_precision("high")
-    backend(*args)
-    torch.testing.assert_close(C, A @ B, atol=atol, rtol=rtol)
-    torch.set_float32_matmul_precision("highest")
+    with torch_use_tf32_matmul():
+        backend(*args)
+        torch.testing.assert_close(C, A @ B, atol=atol, rtol=rtol)
 
     torch.cuda.synchronize()
     warmup_rounds, iterations, rounds = estimate_bench_iter(backend, args)
@@ -57,12 +56,11 @@ def _run_batch_matmul_benchmark(
 
     args = (b, A, B, C) + extra_args
 
-    torch.set_float32_matmul_precision("high")
-    backend(*args)
-    if dtype != torch.float8_e5m2:
-        ref = ref_batch_matmul(b, A, B)
-        torch.testing.assert_close(C, ref, atol=atol, rtol=rtol)
-    torch.set_float32_matmul_precision("highest")
+    with torch_use_tf32_matmul():
+        backend(*args)
+        if dtype != torch.float8_e5m2:
+            ref = ref_batch_matmul(b, A, B)
+            torch.testing.assert_close(C, ref, atol=atol, rtol=rtol)
 
     torch.cuda.synchronize()
     warmup_rounds, iterations, rounds = estimate_bench_iter(backend, args)
@@ -101,9 +99,8 @@ def cutile_matmul(A, B, C):
 
 
 def torch_matmul(A, B, C):
-    torch.set_float32_matmul_precision("high")
-    torch.matmul(A, B, out=C)
-    torch.set_float32_matmul_precision("highest")
+    with torch_use_tf32_matmul():
+        torch.matmul(A, B, out=C)
 
 
 # =============================== Matmul Split K =============================
@@ -174,18 +171,17 @@ def cutile_batch_matmul(bs, A, B, C):
 def torch_batch_matmul(bs, A, B, C):
     if A.dtype == torch.float8_e5m2:
         pytest.skip("float8_e5m2 matmul on torch is not supported")
-    torch.set_float32_matmul_precision("high")
     inv_sa = torch.tensor(1.0, device=A.device, dtype=torch.float32)
     inv_sb = torch.tensor(1.0, device=B.device, dtype=torch.float32)
-    for i in range(bs):
-        # Only multiplication of row-major and column-major matrices is supported by cuBLASLt
-        # So we need to transpose B to column-major view
-        A_row = A[i].contiguous()
-        B_col = B[i].transpose(-2, -1).contiguous().transpose(-2, -1)
-        C[i] = torch._scaled_mm(
-            A_row, B_col, scale_a=inv_sa, scale_b=inv_sb, out_dtype=torch.float32
-        )
-    torch.set_float32_matmul_precision("highest")
+    with torch_use_tf32_matmul():
+        for i in range(bs):
+            # Only multiplication of row-major and column-major matrices is supported by cuBLASLt
+            # So we need to transpose B to column-major view
+            A_row = A[i].contiguous()
+            B_col = B[i].transpose(-2, -1).contiguous().transpose(-2, -1)
+            C[i] = torch._scaled_mm(
+                A_row, B_col, scale_a=inv_sa, scale_b=inv_sb, out_dtype=torch.float32
+            )
 
 
 def ref_batch_matmul(bs, A, B):

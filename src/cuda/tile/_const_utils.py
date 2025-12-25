@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import inspect
-from typing import (Set, Callable, Tuple, get_origin, get_args, Annotated, Any)
+from typing import (Set, Callable, Tuple, get_origin, get_args, get_type_hints, Annotated, Any)
 
 import cuda.tile._stub as ct
 
@@ -18,8 +18,10 @@ def _has_constant_annotation(annotation: Any) -> bool:
 def get_constant_annotations(pyfunc: Callable) -> Set[str]:
     const_annotations = set()
     sig = inspect.signature(pyfunc)
+    resolved_hints = get_type_hints(pyfunc, globalns=pyfunc.__globals__, include_extras=True)
     for name, param in sig.parameters.items():
-        if _has_constant_annotation(param.annotation):
+        param_annotation = resolved_hints.get(name, param.annotation)
+        if _has_constant_annotation(param_annotation):
             const_annotations.add(name)
     return const_annotations
 

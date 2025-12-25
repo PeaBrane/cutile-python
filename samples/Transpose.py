@@ -18,7 +18,7 @@ def transpose_kernel(x, y,
     """
     cuTile kernel to transpose a 2D matrix by processing data in tiles.
 
-    Each CUDA thread block (CTA) is responsible for computing a `tn` x `tm` tile
+    Each block is responsible for computing a `tn` x `tm` tile
     of the output (transposed) matrix `y`. This involves loading a `tm` x `tn`
     tile from the input matrix `x`, transposing it locally, and then storing
     the `tn` x `tm` result to the correct location in `y`.
@@ -31,7 +31,7 @@ def transpose_kernel(x, y,
         tn (ConstInt): The width of the input tile (number of columns from x)
                        processed by this block.
     """
-    # Get the global IDs of the current CUDA block (CTA) in a 2D grid.
+    # Get the global IDs of the current block in a 2D grid.
     # `ct.bid(0)` gives the block ID along the X-axis of the grid, which corresponds
     # to the M-tile index (rows) of the original input matrix `x`.
     # `ct.bid(1)` gives the block ID along the Y-axis of the grid, which corresponds
@@ -42,7 +42,7 @@ def transpose_kernel(x, y,
     # Load a tile from the input matrix 'x'.
     # `ct.load` reads a `tm` x `tn` chunk of data from global memory `x`
     # at the specified `index=(bidx, bidy)`. This data is brought into
-    # the thread block's local scope (e.g., shared memory or registers).
+    # the block's local scope (e.g., shared memory or registers).
     input_tile = ct.load(x, index=(bidx, bidy), shape=(tm, tn))
 
     # Transpose the loaded tile.

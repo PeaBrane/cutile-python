@@ -4,13 +4,18 @@
 
 import argparse
 import cuda.tile as ct
+try:
+    import cuda.tile_experimental as ct_experimental
+except ImportError:
+    ct_experimental = None
 import torch
 import math
+import sys
 
 from torch.nn.functional import scaled_dot_product_attention
 from torch.nn.attention import sdpa_kernel, SDPBackend
-from utils.autotuner import Autotuner, Config, autotune
 from utils.benchmark import report_benchmark
+from types import SimpleNamespace
 
 
 import numpy as np
@@ -209,26 +214,11 @@ def cutile_fmha(Q: torch.Tensor, K: torch.Tensor, V: torch.Tensor,
 
 
 # --- Wrapper function to launch the FMHA kernel with autotuning ---
-@autotune(
-    search_space=[
-        Config(TILE_M=256, TILE_N=128, num_ctas=1, occupancy=2),
-        Config(TILE_M=128, TILE_N=128, num_ctas=2, occupancy=2),
-        Config(TILE_M=128, TILE_N=128, num_ctas=1, occupancy=2),
-        Config(TILE_M=128, TILE_N=128, num_ctas=1, occupancy=1),
-        Config(TILE_M=64, TILE_N=64, num_ctas=1, occupancy=4),
-        Config(TILE_M=64, TILE_N=64, num_ctas=2, occupancy=1),
-        Config(TILE_M=64, TILE_N=32, num_ctas=1, occupancy=2),
-        Config(TILE_M=256, TILE_N=32, num_ctas=2, occupancy=2),
-        Config(TILE_M=32, TILE_N=32, num_ctas=1, occupancy=1),
-
-    ]
-)
 def cutile_autotune_fmha(Q: torch.Tensor, K: torch.Tensor, V: torch.Tensor,
                          qk_scale: float,
                          input_pos: int = 0,
                          query_group_size: int = 1,
-                         causal: bool = False,
-                         autotuner: Autotuner | None = None) -> tuple[torch.Tensor, dict[str, int]]:
+                         causal: bool = False) -> tuple[torch.Tensor, dict[str, int]]:
     """
     Performs Fused Multi-Head Attention (FMHA) using a cuTile kernel with autotuning.
 
@@ -253,23 +243,33 @@ def cutile_autotune_fmha(Q: torch.Tensor, K: torch.Tensor, V: torch.Tensor,
     Out = torch.empty((Batch, Heads, SeqLen_Q, D_v), dtype=Q.dtype, device=Q.device)
 
     # --- Tune/Get the best configuration for the FMHA Kernel ---
-    tuned_result = autotuner(
+    tuned_result = ct_experimental.autotune_launch(
         torch.cuda.current_stream(),
-        grid_fn=lambda named_args, cfg: (math.ceil(SeqLen_Q / cfg.TILE_M), Batch * Heads, 1),
+        grid_fn=lambda cfg: (math.ceil(SeqLen_Q / cfg.TILE_M), Batch * Heads, 1),
         kernel=fmha_kernel,
         args_fn=lambda cfg: (
             Q, K, V, Out,
             qk_scale, input_pos, D_k, Heads,
             cfg.TILE_M, cfg.TILE_N, query_group_size, causal, (SeqLen_KV % cfg.TILE_N) == 0
         ),
+        hints_fn=lambda cfg: {
+            "num_ctas": cfg.num_ctas,
+            "occupancy": cfg.occupancy,
+        },
+        search_space=[
+            SimpleNamespace(TILE_M=256, TILE_N=128, num_ctas=1, occupancy=2),
+            SimpleNamespace(TILE_M=128, TILE_N=128, num_ctas=2, occupancy=2),
+            SimpleNamespace(TILE_M=128, TILE_N=128, num_ctas=1, occupancy=2),
+            SimpleNamespace(TILE_M=128, TILE_N=128, num_ctas=1, occupancy=1),
+            SimpleNamespace(TILE_M=64, TILE_N=64, num_ctas=1, occupancy=4),
+            SimpleNamespace(TILE_M=64, TILE_N=64, num_ctas=2, occupancy=1),
+            SimpleNamespace(TILE_M=64, TILE_N=32, num_ctas=1, occupancy=2),
+            SimpleNamespace(TILE_M=256, TILE_N=32, num_ctas=2, occupancy=2),
+            SimpleNamespace(TILE_M=32, TILE_N=32, num_ctas=1, occupancy=1),
+        ],
     )
 
-    return Out, {
-        "TILE_M": tuned_result.TILE_M,
-        "TILE_N": tuned_result.TILE_N,
-        "num_ctas": tuned_result.num_ctas,
-        "occupancy": tuned_result.occupancy,
-    }
+    return Out, tuned_result.tuned_config
 
 
 def torch_fmha(Q: torch.Tensor, K: torch.Tensor, V: torch.Tensor,
@@ -361,6 +361,10 @@ if __name__ == "__main__":
         print("Correctness check disabled")
 
     # Test 3: Causal Attention with autotuning and performance benchmarking.
+    if ct_experimental is None:
+        print("cuda.tile_experimental not available, skipping autotuning test")
+        sys.exit(0)
+
     print("\n--- Test 3: Causal Attention with autotuning and performance benchmarking ---")
     # --- Increase the problem size ---
     BATCH_SIZE = 8

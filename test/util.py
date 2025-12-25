@@ -209,3 +209,11 @@ def next_power_of_2(n: int):
     n |= n >> 32
     n += 1
     return n
+
+
+@contextmanager
+def torch_use_tf32_matmul():
+    origin = torch.backends.cuda.matmul.fp32_precision
+    torch.backends.cuda.matmul.fp32_precision = "tf32"
+    yield
+    torch.backends.cuda.matmul.fp32_precision = origin

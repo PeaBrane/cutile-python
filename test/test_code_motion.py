@@ -56,6 +56,13 @@ def _find_loop_with_extract(block) -> Loop:
     return ops[0]
 
 
+def _find_first_ifelse(block) -> IfElse:
+    for op in block.traverse():
+        if isinstance(op, IfElse):
+            return op
+    assert False, "No IfElse found in IR"
+
+
 def _is_inside_loop(op: Operation, loop: Loop):
     for inner_op in loop.body.traverse():
         if op is inner_op:
@@ -143,6 +150,29 @@ def entire_loop_yes(x, a, t):
         ct.store(x, i, val)
 
 
+@ct.kernel
+def ifelse_cond_indvar_no(x, a, t):
+    for i in range(x.shape[0]):
+        # condition depends on i
+        if i + 1 == x.shape[0]:
+            val = ct.sqrt(t)
+        else:
+            val = 0.0
+        ct.store(x, i, val)
+
+
+@ct.kernel
+def ifelse_carry_no(x, a, t):
+    for i in range(x.shape[0]):
+        # loop-carried value defined in the loop body
+        val = i + 1.0
+        if t > 0:
+            pass
+        else:
+            val = 0.0
+        ct.store(x, i, val)
+
+
 def make_cases(tuples):
     return [pytest.param(kernel, op_finder, expected_x, id=kernel._pyfunc.__name__)
             for kernel, op_finder, expected_x in tuples]
@@ -159,6 +189,8 @@ def make_cases(tuples):
     (nested_loops_no_yes_yes, _find_sqrt,
      [math.sqrt(6.0), 1.0 + math.sqrt(6.0), 2.0 + math.sqrt(6.0)]),
     (entire_loop_yes, _find_loop_with_extract, [11.0, 11.0, 11.0]),
+    (ifelse_cond_indvar_no, _find_ifelse_with_sqrt, [0.0, 0.0, 2.0]),
+    (ifelse_carry_no, _find_first_ifelse, [1.0, 2.0, 3.0]),
 ]))
 def test_hoisting(kernel, op_finder, expected_x):
     kernel_name = kernel._pyfunc.__name__

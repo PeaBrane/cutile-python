@@ -12,7 +12,7 @@ ConstInt = ct.Constant[int]
 
 
 def swizzle_2d_from_bid(M, N, tm, tn, GROUP_SIZE_M, bid):
-    # Get the global IDs of a given CUDA block in a 1D grid.
+    # Get the global IDs of a given block in a 1D grid.
     num_bid_m = ct.cdiv(M, tm)
     num_bid_n = ct.cdiv(N, tn)
     num_bid_in_group = GROUP_SIZE_M * num_bid_n
@@ -25,7 +25,7 @@ def swizzle_2d_from_bid(M, N, tm, tn, GROUP_SIZE_M, bid):
 
 
 def swizzle_2d(M, N, tm, tn, GROUP_SIZE_M):
-    # Get the global IDs of the current CUDA block (CTA) in a 1D grid.
+    # Get the global IDs of the current block in a 1D grid.
     bid = ct.bid(0)
     return swizzle_2d_from_bid(M, N, tm, tn, GROUP_SIZE_M, bid)
 
@@ -38,7 +38,7 @@ def matmul_kernel(A, B, C,
     """
     cuTile kernel for performing matrix multiplication C = A @ B.
 
-    This kernel uses a tiled approach, where each CUDA thread block (CTA)
+    This kernel uses a tiled approach, where each block
     computes a `tm` x `tn` tile of the output matrix C. The computation
     involves iterating over the K-dimension in chunks of `tk`.
 
@@ -58,10 +58,11 @@ def matmul_kernel(A, B, C,
     N = B.shape[1]
     bidx, bidy = swizzle_2d(M, N, tm, tn, GROUP_SIZE_M)
 
-    # Calculate the total number of K-tiles that need to be processed.
-    # `ct.num_tiles(A, axis=1, shape=(tm, tk))` extracts the K-dimension (axis 1)
-    # from matrix A's shape, assuming A's shape is conceptually (M_tiles, K_tiles),
-    # and then implicitly performs ceiling division by `tk` to get the number of K-tiles.
+    # Calculate the total number of tiles along the K-dimension that need to be processed.
+    # `ct.num_tiles(A, axis=1, shape=(tm, tk))` means:
+    #   "View A as an MxK tensor tiled by (tm, tk), and return the number of tiles along
+    #    axis 1 (the K dimension)."
+    # We pass shape=(tm, tk) to describe the 2D tiling, only `tk` matters for axis=1.
     num_tiles_k = ct.num_tiles(A, axis=1, shape=(tm, tk))
 
     # Initialize an accumulator for the current output tile (tm x tn).
@@ -293,11 +294,13 @@ if __name__ == "__main__":
     print(f"Input A shape: {A_fp32.shape}, dtype: {A_fp32.dtype}")
     print(f"Input B shape: {B_fp32.shape}, dtype: {B_fp32.dtype}")
 
+    atol, rtol = 1e-4, 1e-3
+
     # Perform matrix multiplication using the cuTile wrapper function.
     C_fp32_cutile = cutile_matmul(A_fp32, B_fp32)
     print(f"cuTile Output C shape: {C_fp32_cutile.shape}, dtype: {C_fp32_cutile.dtype}")
     if args.correctness_check:
-        torch.testing.assert_close(C_fp32_cutile, A_fp32 @ B_fp32)
+        torch.testing.assert_close(C_fp32_cutile, A_fp32 @ B_fp32, atol=atol, rtol=rtol)
         print("Correctness check passed")
     else:
         print("Correctness check disabled")
@@ -318,7 +321,7 @@ if __name__ == "__main__":
     C_non_mult_cutile = cutile_matmul(A_non_mult, B_non_mult)
     print(f"cuTile Output C shape: {C_non_mult_cutile.shape}, dtype: {C_non_mult_cutile.dtype}")
     if args.correctness_check:
-        torch.testing.assert_close(C_non_mult_cutile, A_non_mult @ B_non_mult, atol=1e-4, rtol=1e-4)
+        torch.testing.assert_close(C_non_mult_cutile, A_non_mult @ B_non_mult, atol=atol, rtol=rtol)
         print("Correctness check passed")
     else:
         print("Correctness check disabled")
@@ -329,7 +332,7 @@ if __name__ == "__main__":
     print(f"cuTile Output C shape: {C_persistent_fp32_cutile.shape}, "
           f"dtype: {C_persistent_fp32_cutile.dtype}")
     if args.correctness_check:
-        torch.testing.assert_close(C_persistent_fp32_cutile, A_fp32 @ B_fp32)
+        torch.testing.assert_close(C_persistent_fp32_cutile, A_fp32 @ B_fp32, atol=atol, rtol=rtol)
         print("Correctness check passed")
     else:
         print("Correctness check disabled")

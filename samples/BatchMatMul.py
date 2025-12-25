@@ -15,7 +15,7 @@ ConstInt = ct.Constant[int]
 def batch_matmul_kernel(A, B, C, tm: ConstInt, tn: ConstInt, tk: ConstInt):
     """CuTile kernel for batch matrix multiplication
     A has shape (Batch, M, K), B has shape (Batch, K, N) and C has shape (Batch, M, N)
-    Each thread block computes one (tm x tn) tile for a specific batch item.
+    Each block computes one (tm x tn) tile for a specific batch item.
     The grid is 3D: (Batch_idx, M_tile_idx, N_tile_idx).
     """
     pid_batch = ct.bid(0)  # Batch dimension

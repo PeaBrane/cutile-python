@@ -18,7 +18,7 @@ def vec_add_kernel_1d(a, b, c, TILE: ConstInt):
     """
     cuTile kernel for 1D element-wise vector addition using direct tiled loads/stores.
 
-    Each thread block processes a `TILE`-sized chunk of the vectors.
+    Each block processes a `TILE`-sized chunk of the vectors.
     This approach is efficient when the total dimension is a multiple of `TILE`,
     or when out-of-bounds accesses are implicitly handled by the calling context
     (e.g., by padding or ensuring input sizes match grid dimensions).
@@ -28,9 +28,9 @@ def vec_add_kernel_1d(a, b, c, TILE: ConstInt):
         b: Input tensor B.
         c: Output tensor for the sum (A + B).
         TILE (ConstInt): The size of the tile (chunk of data) processed by each
-                         thread block. This must be a compile-time constant.
+                         block. This must be a compile-time constant.
     """
-    # Get the global ID of the current thread block along the first dimension.
+    # Get the global ID of the current block along the first dimension.
     # In a 1D grid, this directly corresponds to the index of the tile.
     bid = ct.bid(0)
 
@@ -57,7 +57,7 @@ def vec_add_kernel_2d(a, b, c, TILE_X: ConstInt, TILE_Y: ConstInt):
     """
     cuTile kernel for 2D element-wise matrix addition using direct tiled loads/stores.
 
-    Each thread block computes a `TILE_X` x `TILE_Y` chunk of the matrices.
+    Each block computes a `TILE_X` x `TILE_Y` chunk of the matrices.
     Similar to the 1D direct kernel, this is efficient when dimensions are
     multiples of the tile sizes.
 
@@ -68,7 +68,7 @@ def vec_add_kernel_2d(a, b, c, TILE_X: ConstInt, TILE_Y: ConstInt):
         TILE_X (ConstInt): The tile dimension along the X-axis (rows).
         TILE_Y (ConstInt): The tile dimension along the Y-axis (columns).
     """
-    # Get the global IDs of the current thread block along the X and Y axes.
+    # Get the global IDs of the current block along the X and Y axes.
     # `ct.bid(0)` for the first grid dimension (typically rows),
     # `ct.bid(1)` for the second grid dimension (typically columns).
     bid_x = ct.bid(0)
@@ -92,7 +92,7 @@ def vec_add_kernel_1d_gather(a, b, c, TILE: ConstInt):
     """
     cuTile kernel for 1D element-wise vector addition using direct tiled loads/stores.
 
-    Each thread block processes a `TILE`-sized chunk of the vectors.
+    Each block processes a `TILE`-sized chunk of the vectors.
     This approach is efficient when the total dimension is a multiple of `TILE`,
     or when out-of-bounds accesses are implicitly handled by the calling context
     (e.g., by padding or ensuring input sizes match grid dimensions).
@@ -102,9 +102,9 @@ def vec_add_kernel_1d_gather(a, b, c, TILE: ConstInt):
         b: Input tensor B.
         c: Output tensor for the sum (A + B).
         TILE (ConstInt): The size of the tile (chunk of data) processed by each
-                         thread block. This must be a compile-time constant.
+                         block. This must be a compile-time constant.
     """
-    # Get the global ID of the current thread block.
+    # Get the global ID of the current block.
     bid = ct.bid(0)
 
     # Calculate indices for elements within the current block's tile.
@@ -135,7 +135,7 @@ def vec_add_kernel_2d_gather(
     """
     cuTile kernel for 2D element-wise matrix addition using direct tiled loads/stores.
 
-    Each thread block computes a `TILE_X` x `TILE_Y` chunk of the matrices.
+    Each block computes a `TILE_X` x `TILE_Y` chunk of the matrices.
     Similar to the 1D direct kernel, this is efficient when dimensions are
     multiples of the tile sizes.
 
@@ -146,7 +146,7 @@ def vec_add_kernel_2d_gather(
         TILE_X (ConstInt): The tile dimension along the X-axis (rows).
         TILE_Y (ConstInt): The tile dimension along the Y-axis (columns).
     """
-    # Get the global IDs of the current thread block along the X and Y axes.
+    # Get the global IDs of the current block along the X and Y axes.
     bid_x = ct.bid(0)
     bid_y = ct.bid(1)
 

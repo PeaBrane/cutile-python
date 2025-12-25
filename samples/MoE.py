@@ -175,7 +175,7 @@ def moe_align_tile_size_torch(
 
 
 def swizzle_2d_from_bid(M, N, tm, tn, GROUP_SIZE_M, bid):
-    # Get the global IDs of a given CUDA block in a 1D grid.
+    # Get the global IDs of a given block in a 1D grid.
     num_bid_m = ct.cdiv(M, tm)
     num_bid_n = ct.cdiv(N, tn)
     num_bid_in_group = GROUP_SIZE_M * num_bid_n
@@ -188,7 +188,7 @@ def swizzle_2d_from_bid(M, N, tm, tn, GROUP_SIZE_M, bid):
 
 
 def swizzle_2d(M, N, tm, tn, GROUP_SIZE_M):
-    # Get the global IDs of the current CUDA block (CTA) in a 1D grid.
+    # Get the global IDs of the current block in a 1D grid.
     bid = ct.bid(0)
     return swizzle_2d_from_bid(M, N, tm, tn, GROUP_SIZE_M, bid)
 

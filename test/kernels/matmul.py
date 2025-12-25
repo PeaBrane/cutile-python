@@ -11,7 +11,7 @@ ConstInt = ct.Constant[int]
 
 
 def swizzle_2d_from_bid(M, N, tm, tn, GROUP_SIZE_M, bid):
-    # Get the global IDs of a given CUDA block in a 1D grid.
+    # Get the global IDs of a given block in a 1D grid.
     num_bid_m = ct.cdiv(M, tm)
     num_bid_n = ct.cdiv(N, tn)
     num_bid_in_group = GROUP_SIZE_M * num_bid_n
@@ -24,7 +24,7 @@ def swizzle_2d_from_bid(M, N, tm, tn, GROUP_SIZE_M, bid):
 
 
 def swizzle_2d(M, N, tm, tn, GROUP_SIZE_M):
-    # Get the global IDs of the current CUDA block (CTA) in a 1D grid.
+    # Get the global IDs of the current block in a 1D grid.
     bid = ct.bid(0)
     return swizzle_2d_from_bid(M, N, tm, tn, GROUP_SIZE_M, bid)
 
@@ -37,7 +37,7 @@ def matmul_kernel(A, B, C,
     """
     cuTile kernel for performing matrix multiplication C = A @ B.
 
-    This kernel uses a tiled approach, where each CUDA thread block (CTA)
+    This kernel uses a tiled approach, where each block
     computes a `tm` x `tn` tile of the output matrix C. The computation
     involves iterating over the K-dimension in chunks of `tk`.
 
@@ -57,10 +57,11 @@ def matmul_kernel(A, B, C,
     N = B.shape[1]
     bidx, bidy = swizzle_2d(M, N, tm, tn, GROUP_SIZE_M)
 
-    # Calculate the total number of K-tiles that need to be processed.
-    # `ct.num_tiles(A, axis=1, shape=(tm, tk))` extracts the K-dimension (axis 1)
-    # from matrix A's shape, assuming A's shape is conceptually (M_tiles, K_tiles),
-    # and then implicitly performs ceiling division by `tk` to get the number of K-tiles.
+    # Calculate the total number of tiles along the K-dimension that need to be processed.
+    # `ct.num_tiles(A, axis=1, shape=(tm, tk))` means:
+    #   "View A as an MxK tensor tiled by (tm, tk), and return the number of tiles along
+    #    axis 1 (the K dimension)."
+    # We pass shape=(tm, tk) to describe the 2D tiling, only `tk` matters for axis=1.
     num_tiles_k = ct.num_tiles(A, axis=1, shape=(tm, tk))
 
     # Initialize an accumulator for the current output tile (tm x tn).
@@ -142,7 +143,7 @@ def matmul_split_k_kernel(A, B, C, LOCKS, COUNTS,
 def batch_matmul_kernel(A, B, C, tm: ConstInt, tn: ConstInt, tk: ConstInt):
     """CuTile kernel for batch matrix multiplication
     A has shape (Batch, M, K), B has shape (Batch, K, N) and C has shape (Batch, M, N)
-    Each thread block computes one (tm x tn) tile for a specific batch item.
+    Each block computes one (tm x tn) tile for a specific batch item.
     The grid is 3D: (Batch_idx, M_tile_idx, N_tile_idx).
     """
     pid_batch = ct.bid(0)  # Batch dimension
